@@ -8,11 +8,6 @@
 	<link rel="stylesheet" href="{{ url_for('static', filename='style/common.css') }}" />
 	<link rel="stylesheet" href="{{ url_for('static', filename='style/index.css') }}" />
 	<link rel="icon" type="img/png" href="{{ url_for('static', filename='images/favicon.png') }}">
-	<script src="{{ url_for('static', filename='scripts/leaflet-1.0.0-rc1.js') }}"></script>
-	<script src="{{ url_for('static', filename='scripts/leaflet.rotatedMarker.js') }}"></script>
-	<script src="{{ url_for('static', filename='scripts/leaflet.svgIcon.js') }}"></script>
-	<script src="{{ url_for('static', filename='scripts/jquery.min.js') }}"></script>
-	<script src="{{ url_for('static', filename='scripts/ocap.js') }}"></script>
 </head>
 <body>
 
@@ -87,14 +82,10 @@
 
 <div id="hint" class="hint">Test popup</div>
 
-<script>
-let opList = <?php echo json_encode($ops); ?>;
-let appVersion = <?php echo json_encode(VERSION); ?>;
-let appTitle = <?php echo json_encode($appTitle); ?>;
-let appDesc = <?php echo json_encode($appDesc); ?>;
-let appAuthor = <?php echo json_encode($appAuthor); ?>;
-
-initOCAP();
-</script>
+<script src="{{ url_for('static', filename='scripts/leaflet-1.0.0-rc1.js') }}"></script>
+<script src="{{ url_for('static', filename='scripts/leaflet.rotatedMarker.js') }}"></script>
+<script src="{{ url_for('static', filename='scripts/leaflet.svgIcon.js') }}"></script>
+<script src="{{ url_for('static', filename='scripts/jquery.min.js') }}"></script>
+<script src="{{ url_for('static', filename='scripts/ocap.js') }}"></script>
 </body>
 </html>

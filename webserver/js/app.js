@@ -21,554 +21,54 @@
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
 
-class Entities {
-	constructor() {
-		this._entities = [];
-	};
+import {Entities, Unit, Vehicle} from './entities';
+import {GameEvents, HitOrKilledEvent, ConnectEvent} from './events';
+import {Groups, Group} from './groups';
+import Vue from 'vue';
+
+
+window.app = new Vue({
+	el: '#test',
+	data: {
+		message: 'Hello, World!'
+	},
+	delimiters: ["[[", "]]"],
+});
+
+var imageSize = null;
+var multiplier = null;
+var trim = 0; // Number of pixels that were trimmed when cropping image (used to correct unit placement)
+var mapMinZoom = 1;
+var mapMaxNativeZoom = 6;
+var mapMaxZoom = mapMaxNativeZoom+3;
+var map = null;
+var mapDiv = null;
+var frameCaptureDelay = 1000; // Delay between capture of each frame in-game (ms). Default: 1000
+var playbackMultiplier = 10; // Playback speed. 1 = realtime.
+var maxPlaybackMultipler = 60; // Max speed user can set playback to
+var minPlaybackMultipler = 1; // Min speed user can set playback to
+var playbackMultiplierStep = 1; // Playback speed slider increment value
+var playbackPaused = true;
+var playbackFrame = 0;
+var entityToFollow = null; // When set, camera will follow this unit
+var ui = null;
+var entities = new Entities();
+var groups = new Groups();
+var gameEvents = new GameEvents();
+var worlds = null;
+
+// Mission details
+var worldName = "";
+var missionName = "";
+var endFrame = 0;
+var missionCurDate = new Date(0);
+
+// Icons
+var icons = null;
+var followColour = "#FFA81A";
+var hitColour = "#FF0000";
+var deadColour = "#000000";
 
-	add(entity) {
-		this._entities.push(entity);
-	};
-
-	getAll() {
-		return this._entities;
-	};
-	
-	getById(id) {
-		return this._entities[id]; // Assumes entity IDs are always equal to their index in _entities
-	};
-
-	getAllByName(name) {
-		let matching = [];
-		this._entities.forEach(function (entity) {
-			if (entity.getName().indexOf(name) != -1) {
-				matching.push(entity);
-			};
-		});
-		return matching;
-	};
-}
-
-// Should not be instantiated directly. Intended only to be used as extender class
-class Entity {
-	constructor(startFrameNum, id, name, positions) {
-		this._startFrameNum = startFrameNum;
-		this._id = id;
-		this._name = name;
-		this._positions = positions; // pos, dir, alive
-		this._marker = null;
-		this.iconType = icons.unknown;
-		this._realIcon = icons.unknown.dead;
-		this._curIcon = icons.unknown.dead;
-		this._tempIcon = icons.unknown.dead;
-		this._lockMarkerIcon = false; // When true, prevent marker icon from being changed
-		this._element = null; // DOM element associated with this entity
-		this._alive = false;
-		this._sideColour = "#000000";
-		this._markerRotationOrigin = "50% 50%";
-		this._popupClassName = "";
-	};
-
-	// Correct index by taking into account startFrameNum.
-	// e.g. If requested frame is 31, and entity startFrameNum is 30,
-	// then relative frame index is 1 (31-30).
-	// If relative index is < 0, then entity doesn't exist yet
-	getRelativeFrameIndex(f) {
-		return (f - this._startFrameNum);
-	};
-
-	getPosAtFrame(f) {
-		f = this.getRelativeFrameIndex(f);
-
-		var notExistYet = f<0; // Unit doesn't exist yet
-		var notExistAnymore = f >= (this._positions.length-1); // Unit dead/doesn't exist anymore
-		if (notExistYet || notExistAnymore) { 
-			return;
-		} else {
-			return this._positions[f].position;
-		};
-	};
-
-	// Get LatLng at specific frame
-	getLatLngAtFrame(f) {
-		var pos = this.getPosAtFrame(f);
-		if (pos != null) {return armaToLatLng(pos)};
-		return;
-	};
-
-	// Get LatLng at current frame
-	getLatLng() {
-		return this.getLatLngAtFrame(playbackFrame);
-	};
-
-	getMarker() {
-		return this._marker;
-	};
-
-	setElement(el) {
-		this._element = el;
-	};
-
-	getElement() {
-		return this._element;
-	};
-
-	getName() {
-		return this._name;
-	};
-
-	getId() {
-		return this._id;
-	};
-
-	_createPopup(content) {
-		let popup = L.popup({
-			autoPan: false,
-			autoClose: false,
-			closeButton: false,
-			className: this._popupClassName
-		});
-		popup.setContent(content);
-		return popup;
-	};
-
-	createMarker(latLng) {
-		let marker = L.marker(latLng).addTo(map);
-		marker.setIcon(this._realIcon);
-		marker.setRotationOrigin(this._markerRotationOrigin);
-		this._marker = marker;
-	};
-
-	// TODO: Optimise this. No need to remove marker (and recreate it later).
-	// 		 Instead, hide marker and then unhide it later when needed again
-	// Remove marker if exists
-	removeMarker() {
-		let marker = this._marker;
-		if (marker != null) {
-			map.removeLayer(marker);
-			this._marker = null;
-		};
-	};
-
-/*	getMarkerEditableGroup() {
-		let doc = this._marker.getElement().contentDocument;
-		return doc.getElementById("editable");
-	};
-
-	setMarkerColour(colour) {
-		let g = this.getMarkerEditableGroup();
-
-		// May be null if not loaded yet
-		if (g != null) {
-			g.style.fill = colour;
-		};
-	};*/
-
-	setMarkerIcon(icon) {
-		this._marker.setIcon(icon);
-		this._curIcon = icon;
-	};
-
-	setMarkerOpacity(opacity) {
-		this._marker.setOpacity(opacity);
-
-		let popup = this._marker.getPopup();
-		if (popup != null) {
-			popup.getElement().style.opacity = opacity;
-		};
-	};
-
-	hideMarkerPopup(bool) {
-		let popup = this._marker.getPopup();
-		if (popup == null) {return};
-
-		let element = popup.getElement();
-		let display = "inherit";
-		if (bool) {display = "none"};
-
-		if (element.style.display != display) {
-			element.style.display = display;
-		};
-	};
-
-	removeElement() {
-		this._element.parentElement.removeChild(this._element);
-		this._element = null;
-	};
-
-	// Does entity now exist (for the first time) at relativeFrameIndex
-	_existFirstTime(relativeFrameIndex) {
-		return (relativeFrameIndex == 0);
-	};
-
-	// Does entity exist yet (not connected/hasn't spawned) at relativeFrameIndex
-	_notExistYet(relativeFrameIndex) {
-		return (relativeFrameIndex < 0);
-	};
-
-	// Does entity exist anymore (disconnected/garbage collected) at relativeFrameIndex
-	_notExistAnymore(relativeFrameIndex) {
-		return (relativeFrameIndex >= this._positions.length);
-	};
-
-	// Is relativeFrameIndex out of bounds
-	isFrameOutOfBounds(relativeFrameIndex) {
-		return ((this._notExistYet(relativeFrameIndex)) || (this._notExistAnymore(relativeFrameIndex)));
-	};
-
-	// Update entiy position, direction, and alive status at valid frame
-	_updateAtFrame(relativeFrameIndex) {
-		// Set pos
-		let latLng = armaToLatLng(this._positions[relativeFrameIndex].position);
-		if (this._marker == null) { // First time unit has appeared on map
-			this.createMarker(latLng);
-		} else {
-			this._marker.setLatLng(latLng);
-		};
-
-		// Set direction
-		this._marker.setRotationAngle(this._positions[relativeFrameIndex].direction);
-
-		// Set alive status
-		this.setAlive(this._positions[relativeFrameIndex].alive);
-	};
-
-	// Manage entity at given frame
-	manageFrame(f) {
-		f = this.getRelativeFrameIndex(f);
-
-		if (this.isFrameOutOfBounds(f)) { // Entity does not exist on frame
-			this.removeMarker();
-		} else { // Entity does exist on frame
-			this._updateAtFrame(f);
-		};
-	};
-
-	_flash(icon, framesToSpan) {
-		this.setMarkerIcon(icon);
-		this._lockMarkerIcon = true;
-		setTimeout(() => {
-			//this._marker.setIcon(this._tempIcon);
-			this._lockMarkerIcon = false;
-		}, (frameCaptureDelay/playbackMultiplier) * framesToSpan);
-	};
-
-	flashHit() {
-		this._flash(this.iconType.hit, 3);
-	};
-
-	flashHighlight() {
-		this._flash(this.iconType.follow, 6);
-	};
-
-	setAlive(alive) {
-		if (alive) {
-			this._alive = alive;
-
-			//console.log(this._marker);
-			if ((!this._lockMarkerIcon) && (this._curIcon != this._realIcon)) {
-				this.setMarkerIcon(this._realIcon);
-			};
-
-			this.setMarkerOpacity(1);
-		} else {
-			let icon = this.iconType.dead;
-			this._alive = alive;
-
-			if (this._curIcon != icon) {
-				this.setMarkerIcon(icon);
-			};
-			this._tempIcon = (icon);
-			this.setMarkerOpacity(0.4);
-		};
-	};
-
-	// Change unit's marker colour (highlight) and set as entity to follow
-	follow() {
-		this._lockMarkerIcon = true; // Prevent marker colour from being changed
-		if (entityToFollow != null) {entityToFollow.unfollow()}; // Unfollow current followed entity (if any)
-		
-		let icon = this.iconType.follow;
-		this.setMarkerIcon(icon);
-		this._tempIcon = icon;
-		entityToFollow = this;
-	};
-
-	// Reset unit's marker colour and clear entityToFollow
-	unfollow() {
-		this._lockMarkerIcon = false;
-
-		let marker = this.getMarker();
-		if (marker != null) {
-			this.setMarkerIcon(this._tempIcon);
-		};
-		entityToFollow = null;
-	};
-};
-
-class Unit extends Entity {
-	constructor(startFrameNum, id, name, group, side, isPlayer, positions, framesFired) {
-		super(startFrameNum, id, name, positions);
-		this._group = group;
-		this._side = side;
-		this.isPlayer = isPlayer;
-		this._framesFired = framesFired;
-		this.killCount = 0;
-		this.deathCount = 0;
-		this._sideClass = "";
-		this._sideColour = "#FFFFFF";
-		this._isInVehicle = false;
-		this.iconType = icons.man;
-		this._popupClassName = "leaflet-popup-unit";
-
-		// Set colour and icon of unit depeneding on side
-		let sideClass = "";
-		let sideColour = "";
-		switch (this._side) {
-			case "WEST":
-				sideClass = "blufor";
-				sideColour = "#004d99";
-				break;
-			case "EAST":
-				sideClass  = "opfor";
-				sideColour = "#800000";
-				break;
-			case "GUER":
-				sideClass  = "ind";
-				sideColour = "#007f00";
-				break;
-			case "CIV":
-				sideClass  = "civ";
-				sideColour = "#650080";
-				break;
-		};
-
-		this._sideClass = sideClass;
-		this._sideColour = sideColour;
-		this._realIcon = this.iconType[sideClass];
-		this._tempIcon = this.iconType[sideClass];
-		this._markerRotationOrigin = "50% 60%";
-	};
-
-	createMarker(latLng) {
-		super.createMarker(latLng);
-
-		// Only create a nametag label (popup) for players
-		if (this.isPlayer) {
-			let popup = this._createPopup(this._name);
-			this._marker.bindPopup(popup).openPopup();
-		};
-	};
-
-	_updateAtFrame(relativeFrameIndex) {
-		super._updateAtFrame(relativeFrameIndex);
-		this.hideMarkerPopup(ui.hideMarkerPopups);
-		this.setIsInVehicle(this._positions[relativeFrameIndex].isInVehicle);
-	};
-
-	setIsInVehicle(isInVehicle) {
-		this._isInVehicle = isInVehicle;
-
-		if (isInVehicle) {
-			this.setMarkerOpacity(0);
-		} else if (!isInVehicle && this._alive) {
-			this.setMarkerOpacity(1);
-		};
-	};
-
-	get sideClass() {return this._sideClass};
-
-	// Check if unit fired on given frame
-	// If true, return position of projectile impact
-	firedOnFrame(f) {
-		for (let i = 0; i < (this._framesFired.length-1); i++) {
-			let frameNum = this._framesFired[i][0];
-			let projectilePos = this._framesFired[i][1];
-			if (frameNum == f) {return projectilePos};
-		};
-		return;
-	};
-
-	remove() {
-		super.remove();
-		this._group.removeUnit(this);
-	};
-
-	getSide() {
-		return this._side;
-	};
-
-	makeElement(liTarget) { // Make and add element to UI target list
-		let liUnit = document.createElement("li");
-		liUnit.className = "liUnit";
-		liUnit.textContent = this._name;
-		liUnit.addEventListener("click", () => {
-			let marker = this.getMarker();
-			if (marker != null) {
-				map.setView(marker.getLatLng(), map.getZoom(), {animate: true});
-				this.follow();
-			};
-		});
-		this.setElement(liUnit);
-		liTarget.appendChild(liUnit);
-	};
-
-	getSideColour() {return this._sideColour};
-
-	getSideClass() {return this._sideClass};
-
-	setAlive(alive) {
-		super.setAlive(alive);
-
-		if (alive) {
-			this._group.addUnit(this);
-		} else {
-			this._group.removeUnit(this);
-		};
-	};
-};
-
-class Vehicle extends Entity {
-	constructor(startFrameNum, id, type, name, positions) {
-		super(startFrameNum, id, name, positions);
-		this._popupClassName = "leaflet-popup-vehicle";
-		this._type = type;
-		this._crew = []; // Crew in order: [driver,gunner,commander,turrets,cargo]
-
-		let iconType = null;
-		switch (type) {
-			case "sea":
-				iconType = icons.ship;
-				break;
-			case "parachute":
-				iconType = icons.parachute;
-				break;
-			case "heli":
-				iconType = icons.heli;
-				break;
-			case "plane":
-				iconType = icons.plane;
-				break;
-			case "truck":
-				iconType = icons.truck;
-				break;
-			case "car":
-				iconType = icons.car;
-				break;
-			case "apc":
-				iconType = icons.apc;
-				break;
-			case "tank":
-				iconType = icons.tank;
-				break;
-			case "static-mortar":
-				iconType = icons.unknown; // TODO
-				break;
-			case "static-weapon":
-				iconType = icons.unknown; // TODO
-				break;
-			default:
-				iconType = icons.unknown;
-		};
-
-		this.iconType = iconType;
-		this._realIcon = iconType.dead;
-		this._tempIcon = iconType.dead;
-	};
-
-	createMarker(latLng) {
-		super.createMarker(latLng);
-
-		let popup = this._createPopup(this._name);
-		this._marker.bindPopup(popup).openPopup();
-
-		// Wait until popup loads, set permanent size
-		var checkPopupLoad = setInterval(() => {
-			if (popup._contentNode != null) {
-				popup._contentNode.style.width = "200px";
-				clearInterval(checkPopupLoad);
-			};
-		}, 100);
-
-		// Add vehicle name tooltip on marker hover
-/*		let markerEl = this._marker.getElement();
-		markerEl.addEventListener("mouseover", (event) => {
-			ui.cursorTargetBox.textContent = this._name;
-			ui.showCursorTooltip(this._name);
-		});*/
-	};
-
-	_updateAtFrame(relativeFrameIndex) {
-		super._updateAtFrame(relativeFrameIndex);
-		this.setCrew(this._positions[relativeFrameIndex].crew);
-	};
-
-	setCrew(crew) {
-		this._crew = crew;
-		//this._marker.getPopup().setContent(`Test`); // Very slow (no need to recalc layout), use ._content instead
-
-		let crewLength = crew.length;
-		let content = `${this._name} <i>(0)</i>`;
-		if (crewLength > 0) {
-			let crewLengthString = `<i>(${crewLength})</i>`;
-			let crewString = this.getCrewString();
-
-			if (crewString.length > 0) {
-				let title = `<u>${this._name}</u> ${crewLengthString}`;
-				content = `${title}<br>${crewString}`;
-			} else {
-				content = `${this._name} ${crewLengthString}`;
-			};
-
-			// Change vehicle icon depending on driver's side
-			let driverId = crew[0];
-			let driver = entities.getById(driverId);
-			//console.log(this);
-			//console.log(driver);
-			let icon = this.iconType[driver.sideClass];
-			if (this._realIcon != icon) {
-				this.setMarkerIcon(icon);
-				this._realIcon = icon; // Vehicle icon will now remain this colour until a unit of a differet side becomes driver
-			};
-		};
-
-		let popupNode = this._marker.getPopup()._contentNode;
-		if (popupNode.innerHTML != content) {
-			popupNode.innerHTML = content;
-		};
-	};
-
-	getCrew() {
-		return this._crew;
-	};
-
-	getCrewString() {
-		if (this._crew.length == 0) {return " "};
-
-		let str = "";
-		this._crew.forEach(function(unitId) {
-			//if (unitId != -1) {
-				let unit = entities.getById(unitId);
-
-				// Only include player names
-				if (unit.isPlayer) {
-					str += (unit.getName() + "<br/>");
-				};
-			//};
-		});
-		return str;
-	};
-
-	// If vehicle has crew, return side colour of 1st crew member. Else return black.
-	getSideColour() {
-		let crew = this._crew;
-		if (crew.length > 0) {
-			return entities.getById(crew[0]).getSideColour();
-		} else {
-			return "black";
-		};
-	};
-};
 
 class UI {
 	constructor() {
@@ -858,10 +358,10 @@ class UI {
 			var cell = document.createElement("td");
 
 			var vals = [
-				op.mission_name,
-				op.world_name,
-				dateToLittleEndianString(new Date(op.date)),
-				secondsToTimeString(op.mission_duration)
+				op.mission,
+				op.world,
+				dateToLittleEndianString(new Date(op.timestamp * 1000)),
+				secondsToTimeString(op.length)
 			];
 			vals.forEach(function(val) {
 				var cell = document.createElement("td");
@@ -871,7 +371,7 @@ class UI {
 
 			row.addEventListener("click", () => {
 				this.modalBody.textContent = "Loading...";
-				processOp("data/" + op.filename);
+				processOp(`static/captures/${op.id}.json`);
 			});
 			table.insertBefore(row, table.childNodes[1]);
 		});
@@ -1006,333 +506,18 @@ class UI {
 	};
 };
 
-class Groups {
-	constructor() {
-		this.groups = [];
-	};
 
-	addGroup(group) {
-		this.groups.push(group);
-	};
-
-	getGroups() {
-		return this.groups;
-	};
-
-	removeGroup(group) {
-		var index = this.groups.indexOf(group);
-		this.groups.splice(index, 1);
-	};
-
-	// Find group by name and side
-	findGroup(name, side) {
-		//console.log("Finding group with name: " + name + ", side: " + side);
-
-		if (this.groups.length == 0) {
-			//console.log("Group does not exist (list empty)!");
-			return;
-		};
-
-		for (let i = 0; i < this.groups.length; i++) {
-			var group = this.groups[i];
-			//console.log("Comparing with group name: " + group.name + ", side: " + group.side);
-			
-			if ((group.getName() == name) && (group.getSide() == side)) {
-				//console.log("Group exists!");
-				return group;
-			};
-		};
-
-		//console.log("Group does not exist!");
-		return;
-	};
-};
-
-class Group {
-	constructor(name, side) {
-		this.name = name;
-		this.side = side;
-		this.units = [];
-		this.element = null; // DOM element associated with this group
-	}
-
-	getSide() {
-		return this.side;
-	};
-
-	getName() {
-		return this.name;
-	};
-
-	getUnits() {
-		return this.units;
-	};
-
-	setElement(el) {
-		this.element = el;
-	};
-
-	getElement() {
-		return this.element;
-	};
-
-	getSize() {
-		return this.units.length;
-	};
-
-	getUnits() {
-		return this.units;
-	};
-
-	getUnit(unit) {
-		return this.units[this.units.indexOf(unit)];
-	};
-
-	// Add unit to group (if not already added)
-	addUnit(unit) {
-		if (this.units.indexOf(unit) != -1) {return};
-		
-		var wasEmpty = this.isEmpty();
-		this.units.push(unit);
-
-		if (wasEmpty) {
-			this.makeElement(); // Make element for group
-			groups.addGroup(this); // Add self to groups list
-		};
-
-		// Make element for unit too
-		unit.makeElement(this.getElement());
-	};
-
-	// Remove unit from group (if not already removed)
-	removeUnit(unit) {
-		var index = this.units.indexOf(unit);
-		if (index == -1) {return};
-
-		this.units.splice(index, 1);
-
-		//console.log(this.name + ": removed " + unit.getName() + ". Remaining: " + this.getSize());
-
-		// Handle what to do if group empty
-		if (this.isEmpty()) {
-			groups.removeGroup(this); // Remove self from global groups object
-			this.removeElement();
-		};
-
-		// Remove element for unit too
-		unit.removeElement();
-	};
-
-	// Remove element from UI groups list
-	removeElement() { 
-		this.element.parentElement.removeChild(this.element);
-		this.setElement(null);
-	};
-
-	makeElement() { // Make and add element to UI groups list
-		var targetList;
-
-		switch (this.getSide()) {
-			case "WEST":
-				targetList = ui.listWest;
-				break;
-			case "EAST":
-				targetList = ui.listEast;
-				break;
-			case "GUER":
-				targetList = ui.listGuer;
-				break;
-			case "CIV":
-				targetList = ui.listCiv;
-				break;
-			default:
-				targetList = ui.listCiv;
-		};
-
-		// Create DOM element
-		var liGroup = document.createElement("li");
-		liGroup.className = "liGroup";
-		liGroup.textContent = this.getName();
-		var group = this;
-		//liGroup.addEventListener("click", function() {console.log(group.getUnits())});
-		this.setElement(liGroup);
-		targetList.appendChild(liGroup);
-	};
-
-	isEmpty() {
-		return this.units.length == 0;
-	};
-};
-
-class GameEvents {
-	constructor() {
-		this._events = [];
-	};
-
-	addEvent(event) {
-		this._events.push(event);
-	};
-
-	// Return an array of events that occured on the given frame
-	getEventsAtFrame(f) {
-		var events = [];
-		this._events.forEach((event) => {
-			if (event.frameNum == f) {
-				events.push(event);
-			};
-		});
-
-		return events;
-	};
-
-	getEvents() {return this._events};
-};
-
-// TODO: Handle case where victim is a vehicle
-class HitKilledEvent {
-	constructor(frameNum, type, causedBy, victim, distance, weapon) {
-		this.frameNum = frameNum; // Frame number that event occurred
-		this.timecode = dateToTimeString(new Date(frameNum*frameCaptureDelay));
-		this.type = type; // "hit" or "killed"
-		this.causedBy = causedBy;
-		this.victim = victim;
-		this.distance = distance;
-		this.weapon = weapon;
-		this._element = null;
-
-		// If causedBy is null, victim was likely killed/hit by collision/fire/exploding vehicle
-		// TODO: Use better way of handling this
-		if (this.causedBy == null) {
-			this.distance = 0;
-			this.weapon = "N/A";
-			this.causedBy = new Unit(null, null, "something", null, null, null, null); // Dummy unit
-		};
-
-
-		// === Create UI element for this event (for later use)
-		// Victim
-		var victimSpan = document.createElement("span");
-		if (victim instanceof Unit) {victimSpan.className = this.victim.getSideClass()};
-		victimSpan.className += " bold";
-		victimSpan.textContent = this.victim.getName();
-
-		// CausedBy
-		var causedBySpan = document.createElement("span");
-		if ((causedBy instanceof Unit) && (causedBy.getId() != null)) {causedBySpan.className = this.causedBy.getSideClass()};
-		causedBySpan.className += " medium";
-		causedBySpan.textContent = this.causedBy.getName();
-
-		var textSpan = document.createElement("span");
-		switch(this.type) {
-			case "killed":
-				textSpan.textContent = " was killed by ";
-				break;
-			case "hit":
-				textSpan.textContent = " was hit by ";
-				break;
-		};
-
-		var detailsDiv = document.createElement("div");
-		detailsDiv.className = "eventDetails";
-		detailsDiv.textContent = this.timecode + " - " + this.distance + "m - " + this.weapon;
-
-		var li = document.createElement("li");
-		li.appendChild(victimSpan);
-		li.appendChild(textSpan);
-		li.appendChild(causedBySpan);
-		li.appendChild(detailsDiv);
-
-		// When clicking on event, skip playback to point of event, move camera to victim's position
-		li.addEventListener("click", () => {
-			console.log(this.victim);
-
-			// Aim to skip back to a point just before this event
-			let targetFrame = this.frameNum - playbackMultiplier;
-			let latLng = this.victim.getLatLngAtFrame(targetFrame);
-			
-			// Rare case: victim did not exist at target frame, fallback to event frame
-			if (latLng == null) {
-				targetFrame = this.frameNum;
-				latLng = this.victim.getLatLngAtFrame(targetFrame);
-			};
-
-			ui.setMissionCurTime(targetFrame);
-			//map.setView(latLng, map.getZoom());
-			//this.victim.flashHighlight();
-			this.victim.follow();
-		});
-		this._element = li;
-	};
-
-	getElement() {return this._element};
-};
-
-class ConnectEvent {
-	constructor(frameNum, type, unitName) {
-		this.frameNum = frameNum;
-		this.timecode = dateToTimeString(new Date(frameNum*frameCaptureDelay));
-		this.type = type;
-		this.unitName = unitName;
-		this._element = null;
-
-		// Create list element for this event (for later use)
-		var span = document.createElement("span");
-		span.className = "medium";
-		span.textContent = this.unitName + " " + this.type;
-
-		var detailsDiv = document.createElement("div");
-		detailsDiv.className = "eventDetails";
-		detailsDiv.textContent = this.timecode;
-
-		var li = document.createElement("li");
-		li.appendChild(span);
-		li.appendChild(detailsDiv);
-		this._element = li;
-	};
-
-	getElement() {return this._element};
-};
-
-var imageSize = null;
-var multiplier = null;
-var trim = 0; // Number of pixels that were trimmed when cropping image (used to correct unit placement)
-var mapMinZoom = 1;
-var mapMaxNativeZoom = 6;
-var mapMaxZoom = mapMaxNativeZoom+3;
-var map = null;
-var mapDiv = null;
-var mapPanes = null;
-var frameCaptureDelay = 1000; // Delay between capture of each frame in-game (ms). Default: 1000
-var playbackMultiplier = 10; // Playback speed. 1 = realtime.
-var maxPlaybackMultipler = 60; // Max speed user can set playback to
-var minPlaybackMultipler = 1; // Min speed user can set playback to
-var playbackMultiplierStep = 1; // Playback speed slider increment value
-var playbackPaused = true;
-var playbackFrame = 0;
-var entityToFollow = null; // When set, camera will follow this unit
-var ui = null;
-var entities = new Entities();
-var groups = new Groups();
-var gameEvents = new GameEvents();
-var worlds = null;
-
-// Mission details
-var worldName = "";
-var missionName = "";
-var endFrame = 0;
-var missionCurDate = new Date(0);
-
-// Icons
-var icons = null;
-var followColour = "#FFA81A";
-var hitColour = "#FF0000";
-var deadColour = "#000000";
-
-function initOCAP() {
+function init() {
 	mapDiv = document.getElementById("map");
 	defineIcons();
 	ui = new UI();
-	ui.setModalOpList(opList);
+
+	fetch('/api/v1/operations').then(res => {
+		return res.json();
+	}).then(json => {
+		console.log(json);
+		ui.setModalOpList(json);
+	});
 	setWorlds();
 
 	window.addEventListener("keypress", function(event) {
@@ -1345,7 +530,7 @@ function initOCAP() {
 };
 
 function setWorlds() {
-	let jsonPath = "images/maps/maps.json";
+	let jsonPath = "static/images/maps/maps.json";
 
 	console.log("Getting worlds from " + jsonPath);
 	$.getJSON(jsonPath, function(data) {
@@ -1378,8 +563,6 @@ function initMap() {
 		zoomDelta: 1,
 		closePopupOnClick: false
 	}).setView([0,0], mapMaxNativeZoom);
-
-	mapPanes = map.getPanes();
 
 	// Hide marker popups once below a certain zoom level
 	map.on("zoom", function() {
@@ -1609,21 +792,24 @@ function processOp(filepath) {
 	var time = new Date();
 
 	$.getJSON(filepath, function(data) {
-		worldName = data.worldName.toLowerCase();
-		missionName = data.missionName;
+		var header = data.header;
+		worldName = header.worldName.toLowerCase();
+		missionName = header.missionName;
 		ui.setMissionName(missionName);
 
-		endFrame = data.endFrame;
+		endFrame = header.frameCount;
 		ui.setMissionEndTime(endFrame);
 
 		// Loop through entities
-		data.entities.forEach(function(entityJSON) {
-			//console.log(entityJSON);
+		for (var entityId in data.entities) {
+			var entityJSON = data.entities[entityId];
+			console.log(entityJSON);
 
 			let type = entityJSON.type;
 			let startFrameNum = entityJSON.startFrameNum;
-			let id = entityJSON.id;
+			let id = entityJSON;
 			let name = entityJSON.name;
+			console.log(name);
 
 			// Convert positions into array of objects
 			let positions = [];
@@ -1657,7 +843,7 @@ function processOp(filepath) {
 				var vehicle = new Vehicle(startFrameNum, id, entityJSON.class, name, positions);
 				entities.add(vehicle);
 			};
-		});
+		};
 
 		// Loop through events
 		data.events.forEach(function(eventJSON) {
@@ -1682,7 +868,7 @@ function processOp(filepath) {
 					} else {
 						weapon = "N/A";
 					};
-					gameEvent = new HitKilledEvent(frameNum, type, causedBy, victim, distance, weapon);
+					gameEvent = new HitOrKilledEvent(frameNum, type, causedBy, victim, distance, weapon);
 
 					// TODO: Find out why victim/causedBy can sometimes be null
 					if (causedBy == null || (victim == null)) {
@@ -1853,3 +1039,5 @@ function startPlaybackLoop() {
 
 	var playbackTimeout = setTimeout(playbackFunction, frameCaptureDelay/playbackMultiplier);
 };
+
+init();

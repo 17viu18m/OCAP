@@ -10,13 +10,17 @@
     },
     "entities": {
       "0": {
+        "type": "unit",
         "startFrameNum": "0",
+        "name": "Sgt. Baldrick",
         "positions": [
           [12, 5],
           [14, 6]
         ]
       },
       "1": {
+        "type": "unit",
+        "name": "Cpt. Adder",
         "startFrameNum": "42",
         "positions": [
           [36, 98],
